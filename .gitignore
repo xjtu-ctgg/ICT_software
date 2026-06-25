@@ -1,0 +1,14 @@
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+# Local contest statements not uploaded to GitHub.
+赛事简介.md
+题目说明和大题要求介绍.md
+LLM Wiki赛题.md
+
+# Generated local caches.
+**/__pycache__/
+*.pyo
+*.pyd
+.DS_Store
