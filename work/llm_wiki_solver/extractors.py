@@ -59,6 +59,9 @@ def _extract_ooxml(path: Path, suffix: str, rel_path: str) -> tuple[str, list[Co
 
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
+        if suffix == "xlsx":
+            tables = _extract_xlsx_tables(archive)
+            texts.extend("\t".join(cell for cell in row if cell) for row in tables)
         for name in names:
             if not name.endswith(".xml"):
                 continue
@@ -95,6 +98,82 @@ def _extract_ooxml(path: Path, suffix: str, rel_path: str) -> tuple[str, list[Co
     comments.extend(extract_comment_records(merged, rel_path, suffix))
     comments = _dedupe_comments(comments)
     return merged, comments, tables
+
+
+def _extract_xlsx_tables(archive: zipfile.ZipFile) -> list[list[str]]:
+    shared_strings = _extract_shared_strings(archive)
+    rows: list[list[str]] = []
+    sheet_names = sorted(
+        name
+        for name in archive.namelist()
+        if name.startswith("xl/worksheets/") and name.endswith(".xml")
+    )
+    for name in sheet_names:
+        root = _parse_xml_bytes(archive.read(name))
+        if root is None:
+            continue
+        for row_node in _iter_local(root, "row"):
+            cells: dict[int, str] = {}
+            max_col = 0
+            next_col = 1
+            for cell_node in [child for child in row_node if _local_name(child.tag) == "c"]:
+                ref = cell_node.attrib.get("r", "")
+                col_idx = _column_index(ref) or next_col
+                next_col = col_idx + 1
+                max_col = max(max_col, col_idx)
+                cells[col_idx] = _xlsx_cell_value(cell_node, shared_strings)
+            if max_col:
+                rows.append([cells.get(idx, "") for idx in range(1, max_col + 1)])
+    return rows
+
+
+def _extract_shared_strings(archive: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in archive.namelist():
+        return []
+    root = _parse_xml_bytes(archive.read("xl/sharedStrings.xml"))
+    if root is None:
+        return []
+    return [
+        re.sub(r"\s+", " ", " ".join(_iter_text(item))).strip()
+        for item in _iter_local(root, "si")
+    ]
+
+
+def _xlsx_cell_value(cell_node: ElementTree.Element, shared_strings: list[str]) -> str:
+    cell_type = cell_node.attrib.get("t", "")
+    value_node = next((child for child in cell_node if _local_name(child.tag) == "v"), None)
+    if cell_type == "inlineStr":
+        return re.sub(r"\s+", " ", " ".join(_iter_text(cell_node))).strip()
+    raw = value_node.text.strip() if value_node is not None and value_node.text else ""
+    if cell_type == "s" and raw.isdigit():
+        idx = int(raw)
+        return shared_strings[idx] if idx < len(shared_strings) else raw
+    return raw
+
+
+def _parse_xml_bytes(data: bytes) -> ElementTree.Element | None:
+    try:
+        return ElementTree.fromstring(data)
+    except ElementTree.ParseError:
+        return None
+
+
+def _iter_local(root: ElementTree.Element, local_name: str) -> list[ElementTree.Element]:
+    return [node for node in root.iter() if _local_name(node.tag) == local_name]
+
+
+def _local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _column_index(cell_ref: str) -> int | None:
+    match = re.match(r"([A-Za-z]+)", cell_ref)
+    if not match:
+        return None
+    value = 0
+    for char in match.group(1).upper():
+        value = value * 26 + ord(char) - ord("A") + 1
+    return value
 
 
 def _xml_to_text(xml_text: str) -> str:

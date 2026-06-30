@@ -12,13 +12,13 @@ def normalize_for_match(text: str) -> str:
 
 def extract_candidate_filename(title: str) -> str | None:
     contextual = re.search(
-        r"(?:找出|查询|读取|打开|修复|完成)?\s*(?P<name>[^\s，,。]+?\.(?:docx?|pptx?|xlsx?|xml|java|py|html|md|js|txt|env|cmd))",
+        r"(?:找出|查询|读取|打开|修复|完成|根据|基于|运行|执行)?\s*(?P<name>[^\s，,。]+?\.(?:docx?|pptx?|xlsx?|xml|java|py|html|md|js|txt|env|cmd))",
         title,
         re.IGNORECASE,
     )
     if contextual:
         name = contextual.group("name")
-        name = re.sub(r"^(?:找出|查询|读取|打开|修复|完成)", "", name)
+        name = re.sub(r"^(?:找出|查询|读取|打开|修复|完成|根据|基于|运行|执行)", "", name)
         return name
     match = re.search(
         r"([\w\u4e00-\u9fff（）()\-_.]+?\.(?:docx?|pptx?|xlsx?|xml|java|py|html|md|js|txt|env|cmd))",

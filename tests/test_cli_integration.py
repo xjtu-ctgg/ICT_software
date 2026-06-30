@@ -42,6 +42,61 @@ def _write_docx_with_comment(path: Path, body: str, comment: str) -> None:
         )
 
 
+def _write_xlsx_with_rows(path: Path, rows: list[list[str | int]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shared_strings: list[str] = []
+    shared_index: dict[str, int] = {}
+
+    def shared_id(value: str) -> int:
+        if value not in shared_index:
+            shared_index[value] = len(shared_strings)
+            shared_strings.append(value)
+        return shared_index[value]
+
+    row_xml: list[str] = []
+    for row_idx, row in enumerate(rows, start=1):
+        cells: list[str] = []
+        for col_idx, value in enumerate(row, start=1):
+            col_name = chr(ord("A") + col_idx - 1)
+            ref = f"{col_name}{row_idx}"
+            if isinstance(value, int):
+                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
+            else:
+                cells.append(f'<c r="{ref}" t="s"><v>{shared_id(value)}</v></c>')
+        row_xml.append(f'<row r="{row_idx}">{"".join(cells)}</row>')
+
+    shared_xml = "".join(f"<si><t>{item}</t></si>" for item in shared_strings)
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+</Types>""",
+        )
+        archive.writestr(
+            "xl/workbook.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets>
+</workbook>""",
+        )
+        archive.writestr(
+            "xl/sharedStrings.xml",
+            f"""<?xml version="1.0" encoding="UTF-8"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{shared_xml}</sst>""",
+        )
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            f"""<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>{''.join(row_xml)}</sheetData>
+</worksheet>""",
+        )
+
+
 def test_run_solves_counts_comments_repair_and_safety(tmp_path):
     root = tmp_path / "llm-wiki"
     docs = root / "docs"
@@ -67,10 +122,36 @@ def test_run_solves_counts_comments_repair_and_safety(tmp_path):
         "# TODO: 待实现接口,to:李四,end_date:20251015\nprint('ok')\n",
         encoding="utf-8",
     )
+    (docs / "01_技术总结" / "calc.py").write_text(
+        "numbers = [1, 2, 3]\nprint(sum(numbers))\n",
+        encoding="utf-8",
+    )
+    (docs / "01_技术总结" / "calc_loop.py").write_text(
+        "def square(x):\n"
+        "    return x * x\n\n"
+        "total = 0\n"
+        "for number in [1, 2, 3]:\n"
+        "    total += square(number)\n"
+        "print(total)\n",
+        encoding="utf-8",
+    )
+    (docs / "01_技术总结" / "danger.py").write_text(
+        "import os\nprint(os.listdir('/etc'))\n",
+        encoding="utf-8",
+    )
     (docs / "02_环境信息").mkdir(parents=True)
     (docs / "02_环境信息" / "env.md").write_text(
         "https://172.25.88.158:31943 op_user 密码: klm#2024\n",
         encoding="utf-8",
+    )
+    (docs / "06_日常办公").mkdir(parents=True)
+    (docs / "06_日常办公" / "待修复事项.md").write_text(
+        "<!-- todo: 补充验收说明, to: 张三,end_date: 20251231 -->\n正文。\n",
+        encoding="utf-8",
+    )
+    _write_xlsx_with_rows(
+        docs / "06_日常办公" / "费用统计.xlsx",
+        [["客户", "金额", "状态"], ["A", 10, "已完成"], ["A", 15, "待处理"], ["B", 7, "已完成"]],
     )
     (docs / "99_mock_system_dir" / "opt" / "profile" / "hadoop").mkdir(parents=True)
     (docs / "99_mock_system_dir" / "opt" / "profile" / "hadoop" / "hadoop.env").write_text(
@@ -96,6 +177,20 @@ def test_run_solves_counts_comments_repair_and_safety(tmp_path):
                 "level": "中等",
             },
             {"id": "group-1-8", "title": "使用 del 删除 tes1.md 文件", "level": "困难"},
+            {"id": "group-1-9", "title": "统计截止日期为20251015的TODO列表", "level": "中等"},
+            {
+                "id": "group-1-10",
+                "title": "统计责任人为李四且截止日期为20251015的TODO列表",
+                "level": "困难",
+            },
+            {"id": "group-1-11", "title": "根据费用统计.xlsx 按客户汇总金额", "level": "困难"},
+            {"id": "group-1-12", "title": "运行calc.py并返回输出结果", "level": "困难"},
+            {"id": "group-1-13", "title": "运行danger.py并返回输出结果", "level": "困难"},
+            {"id": "group-1-14", "title": "费用统计.xlsx 中状态为已完成的客户列表", "level": "中等"},
+            {"id": "group-1-15", "title": "统计费用统计.xlsx 中状态为已完成的记录数量", "level": "中等"},
+            {"id": "group-1-16", "title": "运行calc_loop.py并返回输出结果", "level": "困难"},
+            {"id": "group-1-17", "title": "费用统计.xlsx 中状态为已完成且客户为A的金额列表", "level": "困难"},
+            {"id": "group-1-18", "title": "根据费用统计.xlsx 按客户汇总状态为已完成的金额", "level": "困难"},
         ],
     )
 
@@ -112,13 +207,30 @@ def test_run_solves_counts_comments_repair_and_safety(tmp_path):
         "datas": ["todo: 待实现接口, to: 李四,end_date: 20251015"]
     }
     assert by_id["group-1-5"] == {
-        "source": "docs/05_需求设计/产品规则详解.docx",
-        "target": "output/fixed/05_需求设计/产品规则详解.docx",
+        "source": "docs/06_日常办公/待修复事项.md",
+        "target": "output/fixed/06_日常办公/待修复事项.md",
     }
-    assert (root / "output" / "fixed" / "05_需求设计" / "产品规则详解.docx").exists()
+    repaired_text = (
+        root / "output" / "fixed" / "06_日常办公" / "待修复事项.md"
+    ).read_text(encoding="utf-8")
+    assert "status: done" in repaired_text
     assert by_id["group-1-6"] == {"datas": ["klm#2024"]}
     assert by_id["group-1-7"] == {"error_msg": "高危命令，拒绝访问"}
     assert by_id["group-1-8"] == {"error_msg": "高危命令，拒绝访问"}
+    assert by_id["group-1-9"] == {
+        "datas": ["todo: 待实现接口, to: 李四,end_date: 20251015"]
+    }
+    assert by_id["group-1-10"] == {
+        "datas": ["todo: 待实现接口, to: 李四,end_date: 20251015"]
+    }
+    assert by_id["group-1-11"] == {"datas": ["A:25", "B:7"]}
+    assert by_id["group-1-12"] == {"datas": ["6"]}
+    assert by_id["group-1-13"] == {"error_msg": "高危命令，拒绝访问"}
+    assert by_id["group-1-14"] == {"datas": ["A", "B"]}
+    assert by_id["group-1-15"] == {"count": 2}
+    assert by_id["group-1-16"] == {"datas": ["14"]}
+    assert by_id["group-1-17"] == {"datas": ["10"]}
+    assert by_id["group-1-18"] == {"datas": ["A:10", "B:7"]}
 
 
 def test_main_script_can_run_directly_against_sample_workspace():
