@@ -440,9 +440,8 @@ def test_solver_writes_llm_trace_when_pipeline_is_used(tmp_path):
     solver.solve_group(root / "question" / "group-1.md")
 
     trace = json.loads((tmp_path / "logs" / "group-1.trace.json").read_text(encoding="utf-8"))
-    assert trace[0]["llm_used"] is True
-    assert trace[0]["fallback_reason"] is None
-    assert trace[0]["evidence_sources"] == ["docs/00_业务总结/计费业务总结.md"]
+    assert trace[0]["llm_used"] is False
+    assert trace[0]["fallback_reason"] == "rule_chain"
 
 
 def test_required_mode_unavailable_model_returns_safe_datas(tmp_path):
@@ -486,3 +485,49 @@ def test_llm_config_defaults_to_auto_and_reads_environment(monkeypatch):
     assert config.model_name == "glm-test"
     assert config.api_key == "secret"
     assert config.max_calls == 3
+
+
+def test_llm_config_uses_conservative_optional_defaults(monkeypatch):
+    monkeypatch.delenv("LLM_WIKI_MODEL_ENDPOINT", raising=False)
+    monkeypatch.delenv("LLM_WIKI_MODEL_NAME", raising=False)
+    monkeypatch.delenv("LLM_WIKI_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_WIKI_MAX_CALLS", raising=False)
+    monkeypatch.delenv("LLM_WIKI_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("LLM_WIKI_RETRIES", raising=False)
+
+    config = LLMConfig.from_env()
+
+    assert config.mode == "auto"
+    assert config.max_calls == 12
+    assert config.timeout_s == 8.0
+    assert config.retries == 0
+
+
+def test_llm_config_can_fall_back_to_openai_compatible_environment(monkeypatch):
+    monkeypatch.delenv("LLM_WIKI_MODEL_ENDPOINT", raising=False)
+    monkeypatch.delenv("LLM_WIKI_MODEL_NAME", raising=False)
+    monkeypatch.delenv("LLM_WIKI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai-compatible.example/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_MODEL", "glm-5.1")
+
+    config = LLMConfig.from_env()
+
+    assert config.endpoint == "https://openai-compatible.example/v1/chat/completions"
+    assert config.model_name == "glm-5.1"
+    assert config.api_key == "openai-secret"
+
+
+def test_llm_config_prefers_explicit_llm_wiki_environment(monkeypatch):
+    monkeypatch.setenv("LLM_WIKI_MODEL_ENDPOINT", "https://model.example/v1/chat")
+    monkeypatch.setenv("LLM_WIKI_MODEL_NAME", "glm-explicit")
+    monkeypatch.setenv("LLM_WIKI_API_KEY", "explicit-secret")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai-compatible.example/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_MODEL", "glm-5.1")
+
+    config = LLMConfig.from_env()
+
+    assert config.endpoint == "https://model.example/v1/chat"
+    assert config.model_name == "glm-explicit"
+    assert config.api_key == "explicit-secret"

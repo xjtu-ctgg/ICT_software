@@ -22,6 +22,16 @@ DANGEROUS_COMMAND_PATTERNS = [
     "taskkill",
 ]
 
+CHINESE_DANGEROUS_COMMAND_WORDS = [
+    "删除",
+    "移除",
+    "清空",
+    "格式化",
+    "杀死",
+    "终止进程",
+    "关闭进程",
+]
+
 
 class PermissionGuard:
     def __init__(self, config: dict[str, Any] | None = None):
@@ -34,6 +44,8 @@ class PermissionGuard:
 
     def is_denied_command(self, command_text: str) -> bool:
         normalized = command_text.casefold()
+        if any(word in command_text for word in CHINESE_DANGEROUS_COMMAND_WORDS):
+            return True
         tokens = re.findall(r"[A-Za-z0-9_.:/\\*-]+", normalized)
         patterns = [*self.command_patterns, *DANGEROUS_COMMAND_PATTERNS]
         for pattern in patterns:
@@ -55,15 +67,16 @@ class PermissionGuard:
             if fnmatch.fnmatch(lowered_name, p) or fnmatch.fnmatch(lowered, p):
                 return True
 
-        for pattern in self.dir_patterns:
-            p = self._normalize_pattern(pattern).strip("/")
-            if not p:
-                continue
-            if fnmatch.fnmatch(lowered, p) or fnmatch.fnmatch(lowered, f"*{p}*"):
-                return True
-            parts = lowered.split("/")
-            if p in parts or any(fnmatch.fnmatch(part, p) for part in parts):
-                return True
+        if operation != "read":
+            for pattern in self.dir_patterns:
+                p = self._normalize_pattern(pattern).strip("/")
+                if not p:
+                    continue
+                if fnmatch.fnmatch(lowered, p) or fnmatch.fnmatch(lowered, f"*{p}*"):
+                    return True
+                parts = lowered.split("/")
+                if p in parts or any(fnmatch.fnmatch(part, p) for part in parts):
+                    return True
         return False
 
     @staticmethod

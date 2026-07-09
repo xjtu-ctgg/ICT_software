@@ -2,43 +2,125 @@
   {
     "id": "group-1-1",
     "llm_used": false,
-    "fallback_reason": "rule_chain"
+    "fallback_reason": "rule_chain",
+    "route": "rule_chain",
+    "normalization": {
+      "changed": false
+    },
+    "retrieval_channels": [
+      "structured",
+      "sqlite_fts",
+      "text",
+      "fuzzy",
+      "rrf"
+    ],
+    "safety_decision": "allow"
   },
   {
     "id": "group-1-2",
     "llm_used": false,
-    "fallback_reason": "rule_chain"
+    "fallback_reason": "rule_chain",
+    "route": "rule_chain",
+    "normalization": {
+      "changed": false
+    },
+    "retrieval_channels": [
+      "structured",
+      "sqlite_fts",
+      "text",
+      "fuzzy",
+      "rrf"
+    ],
+    "safety_decision": "allow"
   },
   {
     "id": "group-1-3",
     "llm_used": false,
-    "fallback_reason": "rule_chain"
+    "fallback_reason": "rule_chain",
+    "route": "rule_chain",
+    "normalization": {
+      "changed": false
+    },
+    "retrieval_channels": [
+      "structured",
+      "sqlite_fts",
+      "text",
+      "fuzzy",
+      "rrf"
+    ],
+    "safety_decision": "allow"
   },
   {
     "id": "group-1-4",
-    "llm_mode": "auto",
     "llm_used": false,
-    "fallback_reason": "llm_unavailable_auto"
+    "fallback_reason": "rule_chain",
+    "route": "rule_chain",
+    "normalization": {
+      "changed": false
+    },
+    "retrieval_channels": [
+      "structured",
+      "sqlite_fts",
+      "text",
+      "fuzzy",
+      "rrf"
+    ],
+    "safety_decision": "allow"
   },
   {
     "id": "group-1-5",
-    "llm_mode": "auto",
     "llm_used": false,
-    "fallback_reason": "llm_unavailable_auto"
+    "fallback_reason": "rule_chain",
+    "route": "rule_chain",
+    "normalization": {
+      "changed": false
+    },
+    "retrieval_channels": [
+      "structured",
+      "sqlite_fts",
+      "text",
+      "fuzzy",
+      "rrf"
+    ],
+    "safety_decision": "allow"
   },
   {
     "id": "group-1-6",
     "llm_used": false,
-    "fallback_reason": "rule_chain"
+    "fallback_reason": "rule_chain",
+    "route": "rule_chain",
+    "normalization": {
+      "changed": false
+    },
+    "retrieval_channels": [
+      "structured",
+      "sqlite_fts",
+      "text",
+      "fuzzy",
+      "rrf"
+    ],
+    "safety_decision": "allow"
   },
   {
     "id": "group-1-7",
     "llm_used": false,
-    "fallback_reason": "high_risk"
+    "fallback_reason": "high_risk",
+    "route": "safety_guard",
+    "retrieval_channels": [],
+    "safety_decision": "deny",
+    "normalization": {
+      "changed": false
+    }
   },
   {
     "id": "group-1-8",
     "llm_used": false,
-    "fallback_reason": "high_risk"
+    "fallback_reason": "high_risk",
+    "route": "safety_guard",
+    "retrieval_channels": [],
+    "safety_decision": "deny",
+    "normalization": {
+      "changed": false
+    }
   }
 ]

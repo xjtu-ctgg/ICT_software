@@ -9,10 +9,14 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .llm_client import LLMResponseError, LLMUnavailable
-from .models import DocumentRecord, Question
+from .models import DocumentRecord, Question, SUPPORTED_COUNT_SUFFIXES
 from .permissions import PermissionGuard
 from .search import extract_candidate_filename, find_documents_by_filename, normalize_for_match
 from .policy import DENY_ANSWER
+from .index import HybridIndex
+from .retrieval import HybridRetriever, build_hybrid_index
+
+_COUNT_SUFFIXES = SUPPORTED_COUNT_SUFFIXES
 
 
 @dataclass(frozen=True)
@@ -191,7 +195,7 @@ def build_local_index(records: list[DocumentRecord]) -> LocalIndex:
                     token_estimate=max(1, len(text) // 4),
                 )
             )
-        for comment in [*record.todos, *record.comments]:
+        for comment in record.comments:
             facts.append(
                 FactRecord(
                     source=record.rel_path,
@@ -371,6 +375,7 @@ class ComplexUnderstandingPipeline:
         llm_client: JsonLLM,
         root: Path | None = None,
         llm_mode: str = "auto",
+        hybrid_index: HybridIndex | None = None,
     ):
         self.records = records
         self.permission_guard = permission_guard
@@ -379,6 +384,8 @@ class ComplexUnderstandingPipeline:
         self.llm_mode = llm_mode
         self.index = build_local_index(records)
         self.retriever = EvidenceRetriever(self.index)
+        self.hybrid_index = hybrid_index or build_hybrid_index(records, permission_guard)
+        self.hybrid_retriever = HybridRetriever(self.hybrid_index)
         self.planner = QuestionPlanner(llm_client)
         self.repair_planner = RepairPlanner(llm_client)
         self.judge = EvidenceJudge()
@@ -403,9 +410,9 @@ class ComplexUnderstandingPipeline:
 
         try:
             plan = self.planner.plan(question, fallback_answer)
-            cards = self.retriever.retrieve(plan.subqueries or [question.title], limit=8)
+            cards = self._retrieve_evidence(plan.subqueries or [question.title], limit=8)
             if not self.judge.enough(plan, cards):
-                cards = self.retriever.retrieve([question.title, *plan.subqueries], limit=8)
+                cards = self._retrieve_evidence([question.title, *plan.subqueries], limit=8)
             trace["plan"] = asdict(plan)
             trace["evidence_sources"] = [card.source for card in cards]
             if plan.needs_repair or plan.intent == "repair" or plan.answer_format == "repair":
@@ -570,15 +577,34 @@ class ComplexUnderstandingPipeline:
             return {"source": source, "target": target}
         return {"datas": []}
 
+    def _retrieve_evidence(self, subqueries: list[str], limit: int = 8) -> list[EvidenceCard]:
+        hybrid_cards = self.hybrid_retriever.retrieve(subqueries, limit=limit)
+        if hybrid_cards:
+            return [
+                EvidenceCard(
+                    source=card.source,
+                    evidence_type=card.evidence_type,
+                    text=card.text,
+                    score=card.score,
+                    safety_flags=list(card.channels),
+                )
+                for card in hybrid_cards
+            ]
+        return self.retriever.retrieve(subqueries, limit=limit)
+
 
 def should_use_llm(question: Question, fallback_answer: dict[str, Any], llm_mode: str) -> bool:
     if llm_mode == "off":
         return False
     title = question.title
-    if question.level == "困难":
-        return True
-    if fallback_answer == {"datas": []}:
-        return True
+    fallback_has_content = (
+        (fallback_answer.get("datas") and len(fallback_answer["datas"]) > 0)
+        or (fallback_answer.get("count") is not None and fallback_answer["count"] > 0)
+        or (fallback_answer.get("source") and fallback_answer.get("target"))
+        or any(isinstance(value, int) and value > 0 for key, value in fallback_answer.items() if key in _COUNT_SUFFIXES)
+    )
+    if fallback_has_content:
+        return False
     complex_words = ["涉及", "总结", "分析", "完成", "根据", "为什么", "如何", "对比", "关联"]
     return any(word in title for word in complex_words)
 

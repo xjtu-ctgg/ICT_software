@@ -22,23 +22,35 @@ class LLMConfig:
     endpoint: str | None = None
     model_name: str | None = None
     api_key: str | None = None
-    max_calls: int = 40
-    timeout_s: float = 20.0
-    retries: int = 1
+    max_calls: int = 12
+    timeout_s: float = 8.0
+    retries: int = 0
     tool_calling: bool = True
 
     @classmethod
     def from_env(cls, mode_override: str | None = None) -> "LLMConfig":
         mode = mode_override or os.getenv("LLM_WIKI_LLM_MODE", "auto")
-        max_calls = _int_env("LLM_WIKI_MAX_CALLS", 40)
-        timeout_s = float(os.getenv("LLM_WIKI_TIMEOUT_S", "20"))
-        retries = _int_env("LLM_WIKI_RETRIES", 1)
+        max_calls = _int_env("LLM_WIKI_MAX_CALLS", 12)
+        timeout_s = float(os.getenv("LLM_WIKI_TIMEOUT_S", "8"))
+        retries = _int_env("LLM_WIKI_RETRIES", 0)
         tool_calling = _bool_env("LLM_WIKI_TOOL_CALLING", True)
+        endpoint = os.getenv("LLM_WIKI_MODEL_ENDPOINT") or _openai_compatible_endpoint()
+        model_name = (
+            os.getenv("LLM_WIKI_MODEL_NAME")
+            or os.getenv("OPENAI_MODEL")
+            or os.getenv("MODEL_NAME")
+            or os.getenv("ZHIPUAI_MODEL")
+        )
+        api_key = (
+            os.getenv("LLM_WIKI_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("ZHIPUAI_API_KEY")
+        )
         return cls(
             mode=mode,
-            endpoint=os.getenv("LLM_WIKI_MODEL_ENDPOINT"),
-            model_name=os.getenv("LLM_WIKI_MODEL_NAME"),
-            api_key=os.getenv("LLM_WIKI_API_KEY"),
+            endpoint=endpoint,
+            model_name=model_name,
+            api_key=api_key,
             max_calls=max_calls,
             timeout_s=timeout_s,
             retries=retries,
@@ -169,6 +181,19 @@ def _bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _openai_compatible_endpoint() -> str | None:
+    direct = os.getenv("OPENAI_CHAT_COMPLETIONS_URL") or os.getenv("OPENAI_ENDPOINT")
+    if direct:
+        return direct.rstrip("/")
+    base = os.getenv("OPENAI_BASE_URL") or os.getenv("ZHIPUAI_BASE_URL")
+    if not base:
+        return None
+    base = base.rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
 
 
 def _extract_content(parsed: Any) -> Any:

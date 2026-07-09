@@ -6,7 +6,7 @@ from .models import CommentRecord
 
 
 TODO_PATTERN = re.compile(
-    r"todo\s*[:：]\s*(?P<todo>.*?)\s*[,，]\s*to\s*[:：]\s*(?P<to>.*?)\s*[,，]\s*end_date\s*[:：]\s*(?P<date>\d{8})",
+    r"todo\s*[:：]\s*(?P<todo>.*?)\s*[,，]\s*to\s*[:：]\s*(?P<to>.*?)\s*[,，]\s*end_date\s*[:：]\s*(?P<date>\d[\s\d]*\d|\d{8})",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -31,8 +31,10 @@ def parse_structured_todo(
         return None
     todo = normalize_comment_text(match.group("todo"))
     assignee = normalize_comment_text(match.group("to"))
-    end_date = match.group("date")
-    canonical = f"todo: {todo}, to: {assignee},end_date: {end_date}"
+    end_date = re.sub(r"\s+", "", match.group("date"))
+    if len(end_date) != 8 or not end_date.isdigit():
+        return None
+    canonical = f"todo: {todo}, to: {assignee}, end_date: {end_date}"
     return CommentRecord(
         source=source,
         text=canonical,

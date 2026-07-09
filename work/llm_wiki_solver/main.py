@@ -7,9 +7,11 @@ from pathlib import Path
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from work.llm_wiki_solver.answers import normalize_answer
     from work.llm_wiki_solver.models import Answer
     from work.llm_wiki_solver.solver import WikiSolver
 else:
+    from .answers import normalize_answer
     from .models import Answer
     from .solver import WikiSolver
 
@@ -62,7 +64,7 @@ def _resolve_group_paths(root: Path, group: str) -> list[Path]:
 
 
 def _serialize_answers(answers: list[Answer]) -> list[dict]:
-    return [{"id": answer.id, "answer": answer.answer} for answer in answers]
+    return [{"id": answer.id, "answer": normalize_answer(answer.answer)} for answer in answers]
 
 
 if __name__ == "__main__":

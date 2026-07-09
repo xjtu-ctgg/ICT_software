@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
+from typing import Any
 
 from .comments import extract_comment_records, parse_structured_todo
 from .models import CommentRecord, DocumentRecord
@@ -12,12 +15,70 @@ from .models import CommentRecord, DocumentRecord
 TEXT_SUFFIXES = {"xml", "java", "py", "html", "md", "js", "txt", "json", "yaml", "yml", "csv", "env", "cmd"}
 
 
-def scan_documents(root: Path) -> list[DocumentRecord]:
+def _extract_legacy_format(path: Path, suffix: str, rel_path: str) -> tuple[str, list[CommentRecord], list[list[str]]]:
+    target_suffix = {"doc": "docx", "ppt": "pptx", "xls": "xlsx"}.get(suffix)
+    if not target_suffix:
+        text = _read_text(path)
+        return text, extract_comment_records(text, rel_path, suffix), []
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            result = subprocess.run(
+                [
+                    "libreoffice",
+                    "--headless",
+                    "--convert-to",
+                    target_suffix,
+                    "--outdir",
+                    tmp_dir,
+                    str(path),
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            result = None
+        if result is not None and result.returncode == 0:
+            converted = Path(tmp_dir) / f"{path.stem}.{target_suffix}"
+            if converted.exists() and zipfile.is_zipfile(converted):
+                return _extract_ooxml(converted, target_suffix, rel_path)
+
+    try:
+        from markitdown import MarkItDown  # type: ignore
+    except ImportError:
+        MarkItDown = None  # type: ignore
+    if MarkItDown is not None:
+        try:
+            converted = MarkItDown().convert(str(path))
+            text = getattr(converted, "text_content", str(converted))
+            return text, extract_comment_records(text, rel_path, suffix), []
+        except Exception:
+            pass
+
+    text = _read_text(path)
+    return text, extract_comment_records(text, rel_path, suffix), []
+
+
+def scan_documents(root: Path, permission_guard: Any | None = None) -> list[DocumentRecord]:
     docs_dir = root / "docs"
     records: list[DocumentRecord] = []
     if not docs_dir.exists():
         return records
     for path in sorted(item for item in docs_dir.rglob("*") if item.is_file()):
+        rel_path = path.relative_to(root).as_posix()
+        if permission_guard is not None and permission_guard.is_denied_path(rel_path, operation="read"):
+            suffix = path.suffix.lower().lstrip(".")
+            folder = path.parent.relative_to(root / "docs").as_posix() if path.parent != root / "docs" else ""
+            records.append(
+                DocumentRecord(
+                    path=path,
+                    rel_path=rel_path,
+                    suffix=suffix,
+                    folder=folder,
+                    metadata={"permission_denied": "true"},
+                )
+            )
+            continue
         records.append(extract_document(path, root))
     return records
 
@@ -32,6 +93,18 @@ def extract_document(path: Path, root: Path) -> DocumentRecord:
 
     if suffix in {"docx", "pptx", "xlsx"} and zipfile.is_zipfile(path):
         text, comments, tables = _extract_ooxml(path, suffix, rel_path)
+    elif suffix in {"doc", "ppt", "xls"}:
+        text, comments, tables = _extract_legacy_format(path, suffix, rel_path)
+    elif _docling_enabled():
+        docling = _extract_with_docling(path, rel_path, suffix)
+        if docling is not None:
+            text, comments, tables = docling
+        elif suffix in TEXT_SUFFIXES or _looks_text(path):
+            text = _read_text(path)
+            comments = extract_comment_records(text, rel_path, suffix)
+        else:
+            text = _read_text(path)
+            comments = extract_comment_records(text, rel_path, suffix)
     elif suffix in TEXT_SUFFIXES or _looks_text(path):
         text = _read_text(path)
         comments = extract_comment_records(text, rel_path, suffix)
@@ -52,6 +125,26 @@ def extract_document(path: Path, root: Path) -> DocumentRecord:
     )
 
 
+def _docling_enabled() -> bool:
+    import os
+
+    return os.getenv("LLM_WIKI_ENABLE_DOCLING", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _extract_with_docling(path: Path, rel_path: str, suffix: str) -> tuple[str, list[CommentRecord], list[list[str]]] | None:
+    try:
+        from docling.document_converter import DocumentConverter  # type: ignore
+    except ImportError:
+        return None
+    try:
+        result = DocumentConverter().convert(str(path))
+        document = result.document
+        text = document.export_to_markdown()
+    except Exception:
+        return None
+    return text, extract_comment_records(text, rel_path, suffix), []
+
+
 def _extract_ooxml(path: Path, suffix: str, rel_path: str) -> tuple[str, list[CommentRecord], list[list[str]]]:
     texts: list[str] = []
     comments: list[CommentRecord] = []
@@ -62,6 +155,7 @@ def _extract_ooxml(path: Path, suffix: str, rel_path: str) -> tuple[str, list[Co
         if suffix == "xlsx":
             tables = _extract_xlsx_tables(archive)
             texts.extend("\t".join(cell for cell in row if cell) for row in tables)
+        comment_files = _find_comment_files(names, suffix)
         for name in names:
             if not name.endswith(".xml"):
                 continue
@@ -76,7 +170,7 @@ def _extract_ooxml(path: Path, suffix: str, rel_path: str) -> tuple[str, list[Co
             plain = _xml_to_text(xml_text)
             if plain:
                 texts.append(plain)
-            if "comment" in name.lower() or "comments" in name.lower():
+            if name in comment_files:
                 for idx, comment_text in enumerate(_extract_xml_text_items(xml_text), start=1):
                     structured = parse_structured_todo(
                         comment_text,
@@ -98,6 +192,24 @@ def _extract_ooxml(path: Path, suffix: str, rel_path: str) -> tuple[str, list[Co
     comments.extend(extract_comment_records(merged, rel_path, suffix))
     comments = _dedupe_comments(comments)
     return merged, comments, tables
+
+
+def _find_comment_files(names: list[str], suffix: str) -> set[str]:
+    comment_files: set[str] = set()
+    for name in names:
+        if not name.endswith(".xml"):
+            continue
+        basename = name.casefold().rsplit("/", 1)[-1]
+        if suffix == "docx" and name.startswith("word/"):
+            if basename.startswith("comment") and basename.endswith(".xml"):
+                comment_files.add(name)
+        elif suffix == "pptx" and name.startswith("ppt/"):
+            if basename.startswith("comment") and basename.endswith(".xml"):
+                comment_files.add(name)
+        elif suffix == "xlsx" and name.startswith("xl/"):
+            if "comment" in basename and basename.endswith(".xml"):
+                comment_files.add(name)
+    return comment_files
 
 
 def _extract_xlsx_tables(archive: zipfile.ZipFile) -> list[list[str]]:
@@ -193,10 +305,25 @@ def _extract_xml_text_items(xml_text: str) -> list[str]:
     items: list[str] = []
     for node in root.iter():
         tag = node.tag.rsplit("}", 1)[-1].lower()
-        if "comment" in tag:
+        if tag == "comment":
             text = " ".join(_iter_text(node))
             if text.strip():
                 items.append(re.sub(r"\s+", " ", text).strip())
+    if not items:
+        for node in root.iter():
+            tag = node.tag.rsplit("}", 1)[-1].lower()
+            if "comment" in tag and tag != "comments":
+                text = " ".join(_iter_text(node))
+                if text.strip():
+                    items.append(re.sub(r"\s+", " ", text).strip())
+    if not items:
+        todo_match = re.search(
+            r"todo\s*[:：]\s*.*?[,，]\s*to\s*[:：]\s*.*?[,，]\s*end_date\s*[:：]\s*\d+",
+            re.sub(r"<[^>]+>", " ", xml_text),
+            re.IGNORECASE | re.DOTALL,
+        )
+        if todo_match:
+            items.append(re.sub(r"\s+", " ", todo_match.group(0)).strip())
     if not items:
         text = " ".join(_iter_text(root))
         if text.strip():

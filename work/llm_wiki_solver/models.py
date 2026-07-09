@@ -17,6 +17,13 @@ SUPPORTED_COUNT_SUFFIXES = {
     "html",
     "md",
     "js",
+    "txt",
+    "json",
+    "yaml",
+    "yml",
+    "csv",
+    "env",
+    "cmd",
 }
 
 

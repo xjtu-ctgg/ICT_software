@@ -10,7 +10,7 @@ def test_parse_structured_todo_accepts_mixed_punctuation_and_spacing():
     )
 
     assert record is not None
-    assert record.text == "todo: 补充产品报价字段, to: 李四,end_date: 20251231"
+    assert record.text == "todo: 补充产品报价字段, to: 李四, end_date: 20251231"
     assert record.assignee == "李四"
     assert record.end_date == "20251231"
     assert record.kind == "code"
@@ -59,5 +59,17 @@ def test_extract_comment_records_does_not_treat_markdown_headings_as_comments():
     )
 
     assert [record.text for record in records] == [
-        "todo: 补充字段, to: 张三,end_date: 20251231"
+        "todo: 补充字段, to: 张三, end_date: 20251231"
     ]
+
+
+def test_parse_structured_todo_accepts_spaced_date_digits():
+    record = parse_structured_todo(
+        "todo: 补充验收说明, to: 张三,end_date: 2025 12 31",
+        "docs/a.md",
+        "line:1",
+    )
+
+    assert record is not None
+    assert record.text == "todo: 补充验收说明, to: 张三, end_date: 20251231"
+    assert record.end_date == "20251231"
